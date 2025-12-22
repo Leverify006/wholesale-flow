@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Package, Eye, EyeOff, ArrowRight, Check } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
 
 const Signup = () => {
   const [fullName, setFullName] = useState("");
@@ -16,6 +17,14 @@ const Signup = () => {
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { signUp, user, loading } = useAuth();
+
+  // Redirect if already logged in
+  useEffect(() => {
+    if (!loading && user) {
+      navigate("/dashboard");
+    }
+  }, [user, loading, navigate]);
 
   const passwordRequirements = [
     { label: "At least 8 characters", met: password.length >= 8 },
@@ -35,18 +44,53 @@ const Signup = () => {
       return;
     }
 
-    setIsLoading(true);
-    
-    // Simulate signup - replace with actual auth when backend is connected
-    setTimeout(() => {
-      setIsLoading(false);
+    if (!passwordRequirements.every((r) => r.met)) {
       toast({
-        title: "Demo Mode",
-        description: "Backend not connected. Redirecting to dashboard...",
+        title: "Password requirements not met",
+        description: "Please ensure your password meets all requirements.",
+        variant: "destructive",
       });
-      navigate("/dashboard");
-    }, 1000);
+      return;
+    }
+
+    setIsLoading(true);
+
+    const { error } = await signUp(email, password, fullName);
+
+    if (error) {
+      setIsLoading(false);
+      
+      let errorMessage = "Failed to create account. Please try again.";
+      if (error.message.includes("already registered")) {
+        errorMessage = "This email is already registered. Please sign in instead.";
+      } else if (error.message.includes("invalid email")) {
+        errorMessage = "Please enter a valid email address.";
+      }
+      
+      toast({
+        title: "Sign up failed",
+        description: errorMessage,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    toast({
+      title: "Account created!",
+      description: "Please check your email to confirm your account, or sign in if email confirmation is disabled.",
+    });
+    
+    setIsLoading(false);
+    navigate("/login");
   };
+
+  if (loading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-background">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
