@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, ReactNode, useCallback } from "react";
 import { User, Session } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { Database } from "@/integrations/supabase/types";
@@ -15,6 +15,7 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string, fullName: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
+  refreshUserRole: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -26,7 +27,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [userRole, setUserRole] = useState<AppRole | null>(null);
   const [organizationId, setOrganizationId] = useState<string | null>(null);
 
-  const fetchUserRole = async (userId: string) => {
+  const fetchUserRole = useCallback(async (userId: string) => {
     try {
       const { data, error } = await supabase
         .from("user_roles")
@@ -50,7 +51,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     } catch (err) {
       console.error("Error in fetchUserRole:", err);
     }
-  };
+  }, []);
+
+  const refreshUserRole = useCallback(async () => {
+    if (user) {
+      await fetchUserRole(user.id);
+    }
+  }, [user, fetchUserRole]);
 
   useEffect(() => {
     // Set up auth state listener FIRST
@@ -86,7 +93,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [fetchUserRole]);
 
   const signIn = async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({
@@ -134,6 +141,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         signIn,
         signUp,
         signOut,
+        refreshUserRole,
       }}
     >
       {children}

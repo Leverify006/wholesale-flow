@@ -262,6 +262,8 @@ export type Database = {
           created_by: string | null
           id: string
           organization_id: string
+          po_date: string | null
+          po_number: string | null
           status: string | null
           supplier_id: string | null
           total_cost: number | null
@@ -272,6 +274,8 @@ export type Database = {
           created_by?: string | null
           id?: string
           organization_id: string
+          po_date?: string | null
+          po_number?: string | null
           status?: string | null
           supplier_id?: string | null
           total_cost?: number | null
@@ -282,6 +286,8 @@ export type Database = {
           created_by?: string | null
           id?: string
           organization_id?: string
+          po_date?: string | null
+          po_number?: string | null
           status?: string | null
           supplier_id?: string | null
           total_cost?: number | null
@@ -299,6 +305,69 @@ export type Database = {
             columns: ["supplier_id"]
             isOneToOne: false
             referencedRelation: "suppliers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      shipments: {
+        Row: {
+          actual_arrival: string | null
+          carrier: string | null
+          created_at: string
+          created_by: string | null
+          estimated_arrival: string | null
+          id: string
+          notes: string | null
+          organization_id: string
+          purchase_order_id: string | null
+          shipped_at: string | null
+          status: string
+          tracking_number: string | null
+          updated_at: string
+        }
+        Insert: {
+          actual_arrival?: string | null
+          carrier?: string | null
+          created_at?: string
+          created_by?: string | null
+          estimated_arrival?: string | null
+          id?: string
+          notes?: string | null
+          organization_id: string
+          purchase_order_id?: string | null
+          shipped_at?: string | null
+          status?: string
+          tracking_number?: string | null
+          updated_at?: string
+        }
+        Update: {
+          actual_arrival?: string | null
+          carrier?: string | null
+          created_at?: string
+          created_by?: string | null
+          estimated_arrival?: string | null
+          id?: string
+          notes?: string | null
+          organization_id?: string
+          purchase_order_id?: string | null
+          shipped_at?: string | null
+          status?: string
+          tracking_number?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shipments_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shipments_purchase_order_id_fkey"
+            columns: ["purchase_order_id"]
+            isOneToOne: false
+            referencedRelation: "purchase_orders"
             referencedColumns: ["id"]
           },
         ]
