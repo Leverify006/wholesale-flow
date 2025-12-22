@@ -16,6 +16,7 @@ import {
   LogOut,
   Menu,
   UserPlus,
+  Truck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -39,6 +40,7 @@ const getNavigation = (isAdmin: boolean) => {
     { name: "Products", href: "/products", icon: Package, adminOnly: true },
     { name: "SKUs", href: "/skus", icon: Boxes, adminOnly: true },
     { name: "Inventory", href: "/inventory", icon: Warehouse, adminOnly: true },
+    { name: "Shipments", href: "/shipments", icon: Truck, adminOnly: true },
     { name: "Suppliers", href: "/suppliers", icon: Users, adminOnly: true },
     { name: "Warehouses", href: "/warehouses", icon: Building, adminOnly: true },
     { name: "Approvals", href: "/approvals", icon: CheckSquare, adminOnly: true },

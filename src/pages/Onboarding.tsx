@@ -14,7 +14,7 @@ const Onboarding = () => {
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, refreshUserRole } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,11 +43,11 @@ const Onboarding = () => {
         description: `Welcome to ${orgName}. You've been assigned as admin.`,
       });
 
-      // Small delay to let the auth context refresh
-      setTimeout(() => {
-        navigate("/dashboard");
-        window.location.reload();
-      }, 500);
+      // Refresh the user role in auth context
+      await refreshUserRole();
+
+      // Navigate to dashboard
+      navigate("/dashboard");
     } catch (error: any) {
       console.error("Error creating organization:", error);
       toast({
