@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Package, Eye, EyeOff, ArrowRight } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
 
 const Login = () => {
   const [email, setEmail] = useState("");
@@ -14,21 +15,56 @@ const Login = () => {
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { signIn, user, loading } = useAuth();
+
+  // Redirect if already logged in
+  useEffect(() => {
+    if (!loading && user) {
+      navigate("/dashboard");
+    }
+  }, [user, loading, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-    
-    // Simulate login - replace with actual auth when backend is connected
-    setTimeout(() => {
+
+    const { error } = await signIn(email, password);
+
+    if (error) {
       setIsLoading(false);
+      
+      // Handle specific error messages
+      let errorMessage = "Failed to sign in. Please check your credentials.";
+      if (error.message.includes("Invalid login credentials")) {
+        errorMessage = "Invalid email or password.";
+      } else if (error.message.includes("Email not confirmed")) {
+        errorMessage = "Please confirm your email before signing in.";
+      }
+      
       toast({
-        title: "Demo Mode",
-        description: "Backend not connected. Redirecting to dashboard...",
+        title: "Sign in failed",
+        description: errorMessage,
+        variant: "destructive",
       });
-      navigate("/dashboard");
-    }, 1000);
+      return;
+    }
+
+    toast({
+      title: "Welcome back!",
+      description: "You've successfully signed in.",
+    });
+    
+    navigate("/dashboard");
+    setIsLoading(false);
   };
+
+  if (loading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-background">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
