@@ -28,22 +28,99 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
+interface POFormData {
+  po_number: string;
+  supplier_id: string;
+  product_id: string;
+  sku_id: string;
+  asin: string;
+  region: string;
+  quantity: number;
+  cost_per_unit: number;
+}
+
 const PurchaseOrders = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
-  const [newPO, setNewPO] = useState({ po_number: "", notes: "" });
+  const [newPO, setNewPO] = useState<POFormData>({
+    po_number: "",
+    supplier_id: "",
+    product_id: "",
+    sku_id: "",
+    asin: "",
+    region: "",
+    quantity: 1,
+    cost_per_unit: 0,
+  });
   const { user, organizationId, isAdmin } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  // Fetch purchase orders
+  // Fetch suppliers
+  const { data: suppliers = [] } = useQuery({
+    queryKey: ["suppliers", organizationId],
+    queryFn: async () => {
+      if (!organizationId) return [];
+      const { data, error } = await supabase
+        .from("suppliers")
+        .select("*")
+        .eq("organization_id", organizationId);
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!organizationId,
+  });
+
+  // Fetch products
+  const { data: products = [] } = useQuery({
+    queryKey: ["products", organizationId],
+    queryFn: async () => {
+      if (!organizationId) return [];
+      const { data, error } = await supabase
+        .from("products")
+        .select("*")
+        .eq("organization_id", organizationId);
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!organizationId,
+  });
+
+  // Fetch SKUs based on selected product
+  const { data: skus = [] } = useQuery({
+    queryKey: ["skus", organizationId, newPO.product_id],
+    queryFn: async () => {
+      if (!organizationId) return [];
+      let query = supabase
+        .from("skus")
+        .select("*")
+        .eq("organization_id", organizationId);
+      
+      if (newPO.product_id) {
+        query = query.eq("product_id", newPO.product_id);
+      }
+      
+      const { data, error } = await query;
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!organizationId,
+  });
+
+  // Fetch purchase orders - fixed query without invalid join
   const { data: purchaseOrders = [], isLoading } = useQuery({
     queryKey: ["purchase_orders", organizationId],
     queryFn: async () => {
@@ -53,7 +130,7 @@ const PurchaseOrders = () => {
         .from("purchase_orders")
         .select(`
           *,
-          profiles:created_by(full_name)
+          suppliers(name)
         `)
         .eq("organization_id", organizationId)
         .order("created_at", { ascending: false });
@@ -72,10 +149,12 @@ const PurchaseOrders = () => {
 
   // Create purchase order mutation
   const createPOMutation = useMutation({
-    mutationFn: async (poData: { po_number: string; notes?: string }) => {
+    mutationFn: async (poData: POFormData) => {
       if (!organizationId || !user) throw new Error("Not authenticated");
       
-      const { data, error } = await supabase
+      const totalCost = poData.quantity * poData.cost_per_unit;
+      
+      const { data: poOrder, error: poError } = await supabase
         .from("purchase_orders")
         .insert({
           organization_id: organizationId,
@@ -83,17 +162,43 @@ const PurchaseOrders = () => {
           po_date: new Date().toISOString().split("T")[0],
           created_by: user.id,
           status: "draft",
+          supplier_id: poData.supplier_id || null,
+          total_cost: totalCost,
         })
         .select()
         .single();
       
-      if (error) throw error;
-      return data;
+      if (poError) throw poError;
+
+      // Create PO line item if SKU is selected
+      if (poData.sku_id && poOrder) {
+        const { error: itemError } = await supabase
+          .from("purchase_order_items")
+          .insert({
+            purchase_order_id: poOrder.id,
+            sku_id: poData.sku_id,
+            quantity: poData.quantity,
+            unit_cost: poData.cost_per_unit,
+          });
+        
+        if (itemError) throw itemError;
+      }
+
+      return poOrder;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["purchase_orders"] });
       setIsCreateDialogOpen(false);
-      setNewPO({ po_number: "", notes: "" });
+      setNewPO({
+        po_number: "",
+        supplier_id: "",
+        product_id: "",
+        sku_id: "",
+        asin: "",
+        region: "",
+        quantity: 1,
+        cost_per_unit: 0,
+      });
       toast({
         title: "Purchase Order Created",
         description: "Your PO has been created as a draft.",
@@ -170,6 +275,19 @@ const PurchaseOrders = () => {
     createPOMutation.mutate(newPO);
   };
 
+  // Update ASIN when SKU changes
+  const handleSkuChange = (skuId: string) => {
+    const selectedSku = skus.find((s: any) => s.id === skuId);
+    setNewPO({
+      ...newPO,
+      sku_id: skuId,
+      asin: selectedSku?.asin || "",
+      cost_per_unit: selectedSku?.cost || 0,
+    });
+  };
+
+  const totalCost = newPO.quantity * newPO.cost_per_unit;
+
   return (
     <div className="p-6 space-y-6 animate-fade-in">
       {/* Header */}
@@ -187,7 +305,7 @@ const PurchaseOrders = () => {
               Create PO
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="max-w-2xl">
             <form onSubmit={handleCreatePO}>
               <DialogHeader>
                 <DialogTitle>Create Purchase Order</DialogTitle>
@@ -195,9 +313,9 @@ const PurchaseOrders = () => {
                   Create a new purchase order. It will be saved as a draft.
                 </DialogDescription>
               </DialogHeader>
-              <div className="space-y-4 py-4">
+              <div className="grid grid-cols-2 gap-4 py-4">
                 <div className="space-y-2">
-                  <Label htmlFor="po_number">PO Number</Label>
+                  <Label htmlFor="po_number">PO Number *</Label>
                   <Input
                     id="po_number"
                     placeholder="PO-2024-001"
@@ -206,14 +324,126 @@ const PurchaseOrders = () => {
                     required
                   />
                 </div>
+                
                 <div className="space-y-2">
-                  <Label htmlFor="notes">Notes (optional)</Label>
-                  <Textarea
-                    id="notes"
-                    placeholder="Additional notes..."
-                    value={newPO.notes}
-                    onChange={(e) => setNewPO({ ...newPO, notes: e.target.value })}
+                  <Label htmlFor="supplier">Supplier</Label>
+                  <Select
+                    value={newPO.supplier_id}
+                    onValueChange={(value) => setNewPO({ ...newPO, supplier_id: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select supplier" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {suppliers.map((supplier: any) => (
+                        <SelectItem key={supplier.id} value={supplier.id}>
+                          {supplier.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="product">Product</Label>
+                  <Select
+                    value={newPO.product_id}
+                    onValueChange={(value) => setNewPO({ ...newPO, product_id: value, sku_id: "", asin: "" })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select product" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {products.map((product: any) => (
+                        <SelectItem key={product.id} value={product.id}>
+                          {product.title} {product.brand && `(${product.brand})`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="sku">SKU</Label>
+                  <Select
+                    value={newPO.sku_id}
+                    onValueChange={handleSkuChange}
+                    disabled={!newPO.product_id && skus.length === 0}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select SKU" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {skus.map((sku: any) => (
+                        <SelectItem key={sku.id} value={sku.id}>
+                          {sku.sku}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="asin">ASIN</Label>
+                  <Input
+                    id="asin"
+                    placeholder="B0XXXXXXXX"
+                    value={newPO.asin}
+                    onChange={(e) => setNewPO({ ...newPO, asin: e.target.value })}
                   />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="region">Region</Label>
+                  <Select
+                    value={newPO.region}
+                    onValueChange={(value) => setNewPO({ ...newPO, region: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select region" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="US">US</SelectItem>
+                      <SelectItem value="EU">EU</SelectItem>
+                      <SelectItem value="UK">UK</SelectItem>
+                      <SelectItem value="CA">CA</SelectItem>
+                      <SelectItem value="AU">AU</SelectItem>
+                      <SelectItem value="JP">JP</SelectItem>
+                      <SelectItem value="MX">MX</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="quantity">Quantity</Label>
+                  <Input
+                    id="quantity"
+                    type="number"
+                    min="1"
+                    value={newPO.quantity}
+                    onChange={(e) => setNewPO({ ...newPO, quantity: parseInt(e.target.value) || 1 })}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="cost_per_unit">Cost per Unit ($)</Label>
+                  <Input
+                    id="cost_per_unit"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={newPO.cost_per_unit}
+                    onChange={(e) => setNewPO({ ...newPO, cost_per_unit: parseFloat(e.target.value) || 0 })}
+                  />
+                </div>
+
+                <div className="col-span-2 p-4 bg-muted/50 rounded-lg">
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">Total Cost:</span>
+                    <span className="text-2xl font-bold text-primary">
+                      ${totalCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
                 </div>
               </div>
               <DialogFooter>
@@ -287,17 +517,17 @@ const PurchaseOrders = () => {
               <TableHeader>
                 <TableRow>
                   <TableHead>PO Number</TableHead>
+                  <TableHead>Supplier</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Total Cost</TableHead>
                   <TableHead>Created</TableHead>
-                  {isAdmin && <TableHead>Created By</TableHead>}
                   <TableHead className="w-[50px]"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredOrders.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={isAdmin ? 6 : 5} className="h-32 text-center">
+                    <TableCell colSpan={6} className="h-32 text-center">
                       <div className="flex flex-col items-center gap-2 text-muted-foreground">
                         <ShoppingCart className="h-8 w-8 opacity-50" />
                         <p>No purchase orders found</p>
@@ -317,6 +547,11 @@ const PurchaseOrders = () => {
                           <span className="font-medium">{order.po_number || order.id.slice(0, 8)}</span>
                         </TableCell>
                         <TableCell>
+                          <span className="text-sm text-muted-foreground">
+                            {order.suppliers?.name || "—"}
+                          </span>
+                        </TableCell>
+                        <TableCell>
                           <Badge className={cn("gap-1", statusConfig.className)}>
                             <StatusIcon className="h-3 w-3" />
                             {statusConfig.label}
@@ -330,13 +565,6 @@ const PurchaseOrders = () => {
                             <p>{new Date(order.created_at).toLocaleDateString()}</p>
                           </div>
                         </TableCell>
-                        {isAdmin && (
-                          <TableCell>
-                            <span className="text-sm text-muted-foreground">
-                              {order.profiles?.full_name || "Unknown"}
-                            </span>
-                          </TableCell>
-                        )}
                         <TableCell>
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>

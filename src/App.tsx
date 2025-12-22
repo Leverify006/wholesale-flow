@@ -15,6 +15,7 @@ import Products from "./pages/Products";
 import Inventory from "./pages/Inventory";
 import PurchaseOrders from "./pages/PurchaseOrders";
 import Shipments from "./pages/Shipments";
+import UserManagement from "./pages/UserManagement";
 import PlaceholderPage from "./components/PlaceholderPage";
 import NotFound from "./pages/NotFound";
 import Index from "./pages/Index";
@@ -57,7 +58,7 @@ const App = () => (
                 <Route path="reports" element={<PlaceholderPage title="Reports" description="View analytics and reports" />} />
                 <Route path="billing" element={<PlaceholderPage title="Billing" description="Manage subscription and payments" />} />
                 <Route path="settings" element={<PlaceholderPage title="Settings" description="Configure organization settings" />} />
-                <Route path="users" element={<PlaceholderPage title="User Management" description="Manage team members and roles" />} />
+                <Route path="users" element={<UserManagement />} />
               </Route>
               
               <Route path="*" element={<NotFound />} />
