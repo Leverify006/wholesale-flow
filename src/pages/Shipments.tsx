@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Search, Filter, MoreHorizontal, Truck, Clock, CheckCircle, Package, MapPin } from "lucide-react";
+import { Plus, Search, Filter, MoreHorizontal, Truck, Clock, CheckCircle, Package, MapPin, Link } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,6 +16,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -65,7 +66,7 @@ const Shipments = () => {
         .from("shipments")
         .select(`
           *,
-          purchase_orders:purchase_order_id(po_number)
+          purchase_orders:purchase_order_id(po_number, total_cost, suppliers(name))
         `)
         .eq("organization_id", organizationId)
         .order("created_at", { ascending: false });
@@ -82,12 +83,25 @@ const Shipments = () => {
     queryFn: async () => {
       if (!organizationId) return [];
       
-      const { data, error } = await supabase
+      // Get POs that are approved but don't have shipments yet
+      const { data: existingShipments } = await supabase
+        .from("shipments")
+        .select("purchase_order_id")
+        .eq("organization_id", organizationId);
+      
+      const usedPOIds = (existingShipments || []).map((s: any) => s.purchase_order_id).filter(Boolean);
+      
+      let query = supabase
         .from("purchase_orders")
-        .select("id, po_number")
+        .select("id, po_number, total_cost, suppliers(name)")
         .eq("organization_id", organizationId)
         .eq("status", "approved");
       
+      if (usedPOIds.length > 0) {
+        query = query.not("id", "in", `(${usedPOIds.join(",")})`);
+      }
+      
+      const { data, error } = await query;
       if (error) throw error;
       return data || [];
     },
@@ -118,6 +132,7 @@ const Shipments = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["shipments"] });
+      queryClient.invalidateQueries({ queryKey: ["approved_pos"] });
       setIsCreateDialogOpen(false);
       setNewShipment({ tracking_number: "", carrier: "", purchase_order_id: "", notes: "" });
       toast({
@@ -143,9 +158,21 @@ const Shipments = () => {
         .eq("id", id);
       
       if (error) throw error;
+
+      // If delivered, also update the PO to received
+      if (status === "delivered") {
+        const shipment = shipments.find((s: any) => s.id === id);
+        if (shipment?.purchase_order_id) {
+          await supabase
+            .from("purchase_orders")
+            .update({ status: "received" })
+            .eq("id", shipment.purchase_order_id);
+        }
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["shipments"] });
+      queryClient.invalidateQueries({ queryKey: ["purchase_orders"] });
       toast({
         title: "Shipment Updated",
         description: "Shipment status has been updated.",
@@ -163,21 +190,22 @@ const Shipments = () => {
   const filteredShipments = shipments.filter(
     (shipment: any) =>
       shipment.tracking_number?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      shipment.carrier?.toLowerCase().includes(searchQuery.toLowerCase())
+      shipment.carrier?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      shipment.purchase_orders?.po_number?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const getStatusConfig = (status: string) => {
     switch (status) {
       case "pending":
-        return { icon: Clock, label: "Pending", className: "bg-muted text-muted-foreground" };
+        return { icon: Clock, label: "Pending", className: "bg-muted text-muted-foreground", next: "in_transit" };
       case "in_transit":
-        return { icon: Truck, label: "In Transit", className: "bg-warning/10 text-warning" };
+        return { icon: Truck, label: "In Transit", className: "bg-warning/10 text-warning", next: "delivered" };
       case "delivered":
-        return { icon: CheckCircle, label: "Delivered", className: "bg-primary/10 text-primary" };
+        return { icon: CheckCircle, label: "Delivered", className: "bg-primary/10 text-primary", next: null };
       case "cancelled":
-        return { icon: Package, label: "Cancelled", className: "bg-destructive/10 text-destructive" };
+        return { icon: Package, label: "Cancelled", className: "bg-destructive/10 text-destructive", next: null };
       default:
-        return { icon: Clock, label: status, className: "bg-muted text-muted-foreground" };
+        return { icon: Clock, label: status, className: "bg-muted text-muted-foreground", next: null };
     }
   };
 
@@ -191,6 +219,14 @@ const Shipments = () => {
     e.preventDefault();
     if (!newShipment.tracking_number.trim()) return;
     createShipmentMutation.mutate(newShipment);
+  };
+
+  const getNextStatusLabel = (status: string) => {
+    switch (status) {
+      case "pending": return "Mark as Shipped";
+      case "in_transit": return "Mark as Delivered";
+      default: return null;
+    }
   };
 
   // Only admins can access shipments
@@ -216,7 +252,7 @@ const Shipments = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Shipments</h1>
-          <p className="text-muted-foreground">Track and manage shipments</p>
+          <p className="text-muted-foreground">Track and manage shipments from approved POs</p>
         </div>
         <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
           <DialogTrigger asChild>
@@ -230,12 +266,45 @@ const Shipments = () => {
               <DialogHeader>
                 <DialogTitle>Create Shipment</DialogTitle>
                 <DialogDescription>
-                  Create a new shipment to track deliveries.
+                  Create a new shipment from an approved purchase order.
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
-                  <Label htmlFor="tracking_number">Tracking Number</Label>
+                  <Label htmlFor="purchase_order" className="flex items-center gap-2">
+                    <Link className="h-4 w-4" />
+                    Link to Approved PO *
+                  </Label>
+                  <Select
+                    value={newShipment.purchase_order_id}
+                    onValueChange={(value) => setNewShipment({ ...newShipment, purchase_order_id: value })}
+                    required
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select approved PO" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {approvedPOs.length === 0 ? (
+                        <div className="px-2 py-4 text-center text-muted-foreground text-sm">
+                          No approved POs available
+                        </div>
+                      ) : (
+                        approvedPOs.map((po: any) => (
+                          <SelectItem key={po.id} value={po.id}>
+                            <div className="flex flex-col">
+                              <span>{po.po_number || po.id.slice(0, 8)}</span>
+                              <span className="text-xs text-muted-foreground">
+                                {po.suppliers?.name} • ${po.total_cost?.toLocaleString()}
+                              </span>
+                            </div>
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="tracking_number">Tracking Number *</Label>
                   <Input
                     id="tracking_number"
                     placeholder="1Z999AA10123456784"
@@ -264,24 +333,6 @@ const Shipments = () => {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="purchase_order">Link to Purchase Order (optional)</Label>
-                  <Select
-                    value={newShipment.purchase_order_id}
-                    onValueChange={(value) => setNewShipment({ ...newShipment, purchase_order_id: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select PO" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {approvedPOs.map((po: any) => (
-                        <SelectItem key={po.id} value={po.id}>
-                          {po.po_number || po.id.slice(0, 8)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
                   <Label htmlFor="notes">Notes (optional)</Label>
                   <Textarea
                     id="notes"
@@ -295,7 +346,10 @@ const Shipments = () => {
                 <Button type="button" variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
                   Cancel
                 </Button>
-                <Button type="submit" disabled={createShipmentMutation.isPending}>
+                <Button 
+                  type="submit" 
+                  disabled={createShipmentMutation.isPending || !newShipment.purchase_order_id}
+                >
                   {createShipmentMutation.isPending ? "Creating..." : "Create Shipment"}
                 </Button>
               </DialogFooter>
@@ -332,7 +386,7 @@ const Shipments = () => {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search by tracking number or carrier..."
+                placeholder="Search by tracking number, carrier, or PO..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-9 bg-background/50"
@@ -366,6 +420,7 @@ const Shipments = () => {
                   <TableHead>Tracking Number</TableHead>
                   <TableHead>Carrier</TableHead>
                   <TableHead>Linked PO</TableHead>
+                  <TableHead>Supplier</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead className="w-[50px]"></TableHead>
@@ -374,13 +429,17 @@ const Shipments = () => {
               <TableBody>
                 {filteredShipments.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="h-32 text-center">
+                    <TableCell colSpan={7} className="h-32 text-center">
                       <div className="flex flex-col items-center gap-2 text-muted-foreground">
                         <Truck className="h-8 w-8 opacity-50" />
                         <p>No shipments found</p>
-                        <Button variant="outline" size="sm" onClick={() => setIsCreateDialogOpen(true)}>
-                          Create your first shipment
-                        </Button>
+                        {approvedPOs.length > 0 ? (
+                          <Button variant="outline" size="sm" onClick={() => setIsCreateDialogOpen(true)}>
+                            Create your first shipment
+                          </Button>
+                        ) : (
+                          <p className="text-sm">Approve a PO first to create shipments</p>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -388,14 +447,21 @@ const Shipments = () => {
                   filteredShipments.map((shipment: any) => {
                     const statusConfig = getStatusConfig(shipment.status);
                     const StatusIcon = statusConfig.icon;
+                    const nextStatusLabel = getNextStatusLabel(shipment.status);
+                    
                     return (
                       <TableRow key={shipment.id} className="cursor-pointer hover:bg-muted/50">
                         <TableCell>
                           <span className="font-medium font-mono">{shipment.tracking_number}</span>
                         </TableCell>
-                        <TableCell className="capitalize">{shipment.carrier || "-"}</TableCell>
+                        <TableCell className="capitalize">{shipment.carrier || "—"}</TableCell>
                         <TableCell>
-                          {shipment.purchase_orders?.po_number || "-"}
+                          <Badge variant="outline">
+                            {shipment.purchase_orders?.po_number || "—"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {shipment.purchase_orders?.suppliers?.name || "—"}
                         </TableCell>
                         <TableCell>
                           <Badge className={cn("gap-1", statusConfig.className)}>
@@ -415,37 +481,40 @@ const Shipments = () => {
                                 <MoreHorizontal className="h-4 w-4" />
                               </Button>
                             </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
+                            <DropdownMenuContent align="end" className="bg-popover">
                               <DropdownMenuItem>View Details</DropdownMenuItem>
-                              {shipment.status === "pending" && (
-                                <DropdownMenuItem 
-                                  onClick={() => updateStatusMutation.mutate({ 
-                                    id: shipment.id, 
-                                    status: "in_transit",
-                                    updates: { shipped_at: new Date().toISOString() }
-                                  })}
-                                >
-                                  Mark as Shipped
-                                </DropdownMenuItem>
-                              )}
-                              {shipment.status === "in_transit" && (
-                                <DropdownMenuItem
-                                  onClick={() => updateStatusMutation.mutate({ 
-                                    id: shipment.id, 
-                                    status: "delivered",
-                                    updates: { actual_arrival: new Date().toISOString() }
-                                  })}
-                                >
-                                  Mark as Delivered
-                                </DropdownMenuItem>
+                              {nextStatusLabel && (
+                                <>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem 
+                                    onClick={() => {
+                                      const updates: Record<string, any> = {};
+                                      if (shipment.status === "pending") {
+                                        updates.shipped_at = new Date().toISOString();
+                                      } else if (shipment.status === "in_transit") {
+                                        updates.actual_arrival = new Date().toISOString();
+                                      }
+                                      updateStatusMutation.mutate({ 
+                                        id: shipment.id, 
+                                        status: statusConfig.next!,
+                                        updates
+                                      });
+                                    }}
+                                  >
+                                    {nextStatusLabel}
+                                  </DropdownMenuItem>
+                                </>
                               )}
                               {shipment.status !== "delivered" && shipment.status !== "cancelled" && (
-                                <DropdownMenuItem 
-                                  onClick={() => updateStatusMutation.mutate({ id: shipment.id, status: "cancelled" })}
-                                  className="text-destructive"
-                                >
-                                  Cancel Shipment
-                                </DropdownMenuItem>
+                                <>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem 
+                                    onClick={() => updateStatusMutation.mutate({ id: shipment.id, status: "cancelled" })}
+                                    className="text-destructive"
+                                  >
+                                    Cancel Shipment
+                                  </DropdownMenuItem>
+                                </>
                               )}
                             </DropdownMenuContent>
                           </DropdownMenu>

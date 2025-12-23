@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Search, Filter, MoreHorizontal, ShoppingCart, Clock, CheckCircle, XCircle, Send } from "lucide-react";
+import { Plus, Search, Filter, MoreHorizontal, ShoppingCart, Clock, CheckCircle, XCircle, Send, PlusCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -35,6 +35,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -44,12 +45,18 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 interface POFormData {
   po_number: string;
   supplier_id: string;
+  supplier_name: string;
   product_id: string;
+  product_name: string;
   sku_id: string;
+  sku_code: string;
   asin: string;
   region: string;
   quantity: number;
   cost_per_unit: number;
+  use_existing_supplier: boolean;
+  use_existing_product: boolean;
+  use_existing_sku: boolean;
 }
 
 const PurchaseOrders = () => {
@@ -58,12 +65,18 @@ const PurchaseOrders = () => {
   const [newPO, setNewPO] = useState<POFormData>({
     po_number: "",
     supplier_id: "",
+    supplier_name: "",
     product_id: "",
+    product_name: "",
     sku_id: "",
+    sku_code: "",
     asin: "",
     region: "",
     quantity: 1,
     cost_per_unit: 0,
+    use_existing_supplier: true,
+    use_existing_product: true,
+    use_existing_sku: true,
   });
   const { user, organizationId, isAdmin } = useAuth();
   const { toast } = useToast();
@@ -109,7 +122,7 @@ const PurchaseOrders = () => {
         .select("*")
         .eq("organization_id", organizationId);
       
-      if (newPO.product_id) {
+      if (newPO.product_id && newPO.use_existing_product) {
         query = query.eq("product_id", newPO.product_id);
       }
       
@@ -120,7 +133,7 @@ const PurchaseOrders = () => {
     enabled: !!organizationId,
   });
 
-  // Fetch purchase orders - fixed query without invalid join
+  // Fetch purchase orders
   const { data: purchaseOrders = [], isLoading } = useQuery({
     queryKey: ["purchase_orders", organizationId],
     queryFn: async () => {
@@ -147,11 +160,79 @@ const PurchaseOrders = () => {
     enabled: !!organizationId,
   });
 
+  // Create supplier mutation
+  const createSupplierMutation = useMutation({
+    mutationFn: async (name: string) => {
+      if (!organizationId) throw new Error("No organization");
+      const { data, error } = await supabase
+        .from("suppliers")
+        .insert({ name, organization_id: organizationId })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  // Create product mutation
+  const createProductMutation = useMutation({
+    mutationFn: async (title: string) => {
+      if (!organizationId) throw new Error("No organization");
+      const { data, error } = await supabase
+        .from("products")
+        .insert({ title, organization_id: organizationId })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  // Create SKU mutation
+  const createSKUMutation = useMutation({
+    mutationFn: async ({ sku, product_id, asin, cost }: { sku: string; product_id: string; asin?: string; cost?: number }) => {
+      if (!organizationId) throw new Error("No organization");
+      const { data, error } = await supabase
+        .from("skus")
+        .insert({ sku, product_id, organization_id: organizationId, asin, cost })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    },
+  });
+
   // Create purchase order mutation
   const createPOMutation = useMutation({
     mutationFn: async (poData: POFormData) => {
       if (!organizationId || !user) throw new Error("Not authenticated");
       
+      // Handle supplier creation if manual
+      let supplierId = poData.supplier_id;
+      if (!poData.use_existing_supplier && poData.supplier_name.trim()) {
+        const supplier = await createSupplierMutation.mutateAsync(poData.supplier_name);
+        supplierId = supplier.id;
+      }
+
+      // Handle product creation if manual
+      let productId = poData.product_id;
+      if (!poData.use_existing_product && poData.product_name.trim()) {
+        const product = await createProductMutation.mutateAsync(poData.product_name);
+        productId = product.id;
+      }
+
+      // Handle SKU creation if manual
+      let skuId = poData.sku_id;
+      if (!poData.use_existing_sku && poData.sku_code.trim() && productId) {
+        const sku = await createSKUMutation.mutateAsync({
+          sku: poData.sku_code,
+          product_id: productId,
+          asin: poData.asin || undefined,
+          cost: poData.cost_per_unit || undefined,
+        });
+        skuId = sku.id;
+      }
+
       const totalCost = poData.quantity * poData.cost_per_unit;
       
       const { data: poOrder, error: poError } = await supabase
@@ -162,7 +243,7 @@ const PurchaseOrders = () => {
           po_date: new Date().toISOString().split("T")[0],
           created_by: user.id,
           status: "draft",
-          supplier_id: poData.supplier_id || null,
+          supplier_id: supplierId || null,
           total_cost: totalCost,
         })
         .select()
@@ -171,12 +252,12 @@ const PurchaseOrders = () => {
       if (poError) throw poError;
 
       // Create PO line item if SKU is selected
-      if (poData.sku_id && poOrder) {
+      if (skuId && poOrder) {
         const { error: itemError } = await supabase
           .from("purchase_order_items")
           .insert({
             purchase_order_id: poOrder.id,
-            sku_id: poData.sku_id,
+            sku_id: skuId,
             quantity: poData.quantity,
             unit_cost: poData.cost_per_unit,
           });
@@ -188,17 +269,11 @@ const PurchaseOrders = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["purchase_orders"] });
+      queryClient.invalidateQueries({ queryKey: ["suppliers"] });
+      queryClient.invalidateQueries({ queryKey: ["products"] });
+      queryClient.invalidateQueries({ queryKey: ["skus"] });
       setIsCreateDialogOpen(false);
-      setNewPO({
-        po_number: "",
-        supplier_id: "",
-        product_id: "",
-        sku_id: "",
-        asin: "",
-        region: "",
-        quantity: 1,
-        cost_per_unit: 0,
-      });
+      resetForm();
       toast({
         title: "Purchase Order Created",
         description: "Your PO has been created as a draft.",
@@ -239,6 +314,25 @@ const PurchaseOrders = () => {
     },
   });
 
+  const resetForm = () => {
+    setNewPO({
+      po_number: "",
+      supplier_id: "",
+      supplier_name: "",
+      product_id: "",
+      product_name: "",
+      sku_id: "",
+      sku_code: "",
+      asin: "",
+      region: "",
+      quantity: 1,
+      cost_per_unit: 0,
+      use_existing_supplier: true,
+      use_existing_product: true,
+      use_existing_sku: true,
+    });
+  };
+
   const filteredOrders = purchaseOrders.filter(
     (order: any) =>
       order.po_number?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -255,8 +349,9 @@ const PurchaseOrders = () => {
         return { icon: CheckCircle, label: "Approved", className: "bg-primary/10 text-primary" };
       case "received":
         return { icon: CheckCircle, label: "Received", className: "bg-accent/10 text-accent" };
+      case "rejected":
       case "cancelled":
-        return { icon: XCircle, label: "Cancelled", className: "bg-destructive/10 text-destructive" };
+        return { icon: XCircle, label: status === "rejected" ? "Rejected" : "Cancelled", className: "bg-destructive/10 text-destructive" };
       default:
         return { icon: Clock, label: status, className: "bg-muted text-muted-foreground" };
     }
@@ -305,15 +400,16 @@ const PurchaseOrders = () => {
               Create PO
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
             <form onSubmit={handleCreatePO}>
               <DialogHeader>
                 <DialogTitle>Create Purchase Order</DialogTitle>
                 <DialogDescription>
-                  Create a new purchase order. It will be saved as a draft.
+                  Create a new purchase order. Select from existing data or add manually.
                 </DialogDescription>
               </DialogHeader>
-              <div className="grid grid-cols-2 gap-4 py-4">
+              <div className="space-y-6 py-4">
+                {/* PO Number */}
                 <div className="space-y-2">
                   <Label htmlFor="po_number">PO Number *</Label>
                   <Input
@@ -324,120 +420,171 @@ const PurchaseOrders = () => {
                     required
                   />
                 </div>
-                
-                <div className="space-y-2">
-                  <Label htmlFor="supplier">Supplier</Label>
-                  <Select
-                    value={newPO.supplier_id}
-                    onValueChange={(value) => setNewPO({ ...newPO, supplier_id: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select supplier" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {suppliers.map((supplier: any) => (
-                        <SelectItem key={supplier.id} value={supplier.id}>
-                          {supplier.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+
+                {/* Supplier Section */}
+                <div className="space-y-3">
+                  <Label className="text-base font-semibold">Supplier</Label>
+                  <Tabs value={newPO.use_existing_supplier ? "existing" : "manual"} onValueChange={(v) => setNewPO({ ...newPO, use_existing_supplier: v === "existing" })}>
+                    <TabsList className="grid w-full grid-cols-2">
+                      <TabsTrigger value="existing">Select Existing</TabsTrigger>
+                      <TabsTrigger value="manual">Add Manually</TabsTrigger>
+                    </TabsList>
+                    <TabsContent value="existing" className="mt-2">
+                      <Select
+                        value={newPO.supplier_id}
+                        onValueChange={(value) => setNewPO({ ...newPO, supplier_id: value })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select supplier" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {suppliers.map((supplier: any) => (
+                            <SelectItem key={supplier.id} value={supplier.id}>
+                              {supplier.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TabsContent>
+                    <TabsContent value="manual" className="mt-2">
+                      <Input
+                        placeholder="Enter supplier name"
+                        value={newPO.supplier_name}
+                        onChange={(e) => setNewPO({ ...newPO, supplier_name: e.target.value })}
+                      />
+                    </TabsContent>
+                  </Tabs>
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="product">Product</Label>
-                  <Select
-                    value={newPO.product_id}
-                    onValueChange={(value) => setNewPO({ ...newPO, product_id: value, sku_id: "", asin: "" })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select product" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {products.map((product: any) => (
-                        <SelectItem key={product.id} value={product.id}>
-                          {product.title} {product.brand && `(${product.brand})`}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                {/* Product Section */}
+                <div className="space-y-3">
+                  <Label className="text-base font-semibold">Product</Label>
+                  <Tabs value={newPO.use_existing_product ? "existing" : "manual"} onValueChange={(v) => setNewPO({ ...newPO, use_existing_product: v === "existing", product_id: "", sku_id: "" })}>
+                    <TabsList className="grid w-full grid-cols-2">
+                      <TabsTrigger value="existing">Select Existing</TabsTrigger>
+                      <TabsTrigger value="manual">Add Manually</TabsTrigger>
+                    </TabsList>
+                    <TabsContent value="existing" className="mt-2">
+                      <Select
+                        value={newPO.product_id}
+                        onValueChange={(value) => setNewPO({ ...newPO, product_id: value, sku_id: "", asin: "" })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select product" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {products.map((product: any) => (
+                            <SelectItem key={product.id} value={product.id}>
+                              {product.title} {product.brand && `(${product.brand})`}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TabsContent>
+                    <TabsContent value="manual" className="mt-2">
+                      <Input
+                        placeholder="Enter product name"
+                        value={newPO.product_name}
+                        onChange={(e) => setNewPO({ ...newPO, product_name: e.target.value })}
+                      />
+                    </TabsContent>
+                  </Tabs>
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="sku">SKU</Label>
-                  <Select
-                    value={newPO.sku_id}
-                    onValueChange={handleSkuChange}
-                    disabled={!newPO.product_id && skus.length === 0}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select SKU" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {skus.map((sku: any) => (
-                        <SelectItem key={sku.id} value={sku.id}>
-                          {sku.sku}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                {/* SKU Section */}
+                <div className="space-y-3">
+                  <Label className="text-base font-semibold">SKU</Label>
+                  <Tabs value={newPO.use_existing_sku ? "existing" : "manual"} onValueChange={(v) => setNewPO({ ...newPO, use_existing_sku: v === "existing" })}>
+                    <TabsList className="grid w-full grid-cols-2">
+                      <TabsTrigger value="existing">Select Existing</TabsTrigger>
+                      <TabsTrigger value="manual">Add Manually</TabsTrigger>
+                    </TabsList>
+                    <TabsContent value="existing" className="mt-2">
+                      <Select
+                        value={newPO.sku_id}
+                        onValueChange={handleSkuChange}
+                        disabled={skus.length === 0}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select SKU" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {skus.map((sku: any) => (
+                            <SelectItem key={sku.id} value={sku.id}>
+                              {sku.sku} {sku.asin && `(ASIN: ${sku.asin})`}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TabsContent>
+                    <TabsContent value="manual" className="mt-2">
+                      <Input
+                        placeholder="Enter SKU code"
+                        value={newPO.sku_code}
+                        onChange={(e) => setNewPO({ ...newPO, sku_code: e.target.value })}
+                      />
+                    </TabsContent>
+                  </Tabs>
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="asin">ASIN</Label>
-                  <Input
-                    id="asin"
-                    placeholder="B0XXXXXXXX"
-                    value={newPO.asin}
-                    onChange={(e) => setNewPO({ ...newPO, asin: e.target.value })}
-                  />
+                {/* Additional fields */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="asin">ASIN</Label>
+                    <Input
+                      id="asin"
+                      placeholder="B0XXXXXXXX"
+                      value={newPO.asin}
+                      onChange={(e) => setNewPO({ ...newPO, asin: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="region">Region</Label>
+                    <Select
+                      value={newPO.region}
+                      onValueChange={(value) => setNewPO({ ...newPO, region: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select region" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="US">US</SelectItem>
+                        <SelectItem value="EU">EU</SelectItem>
+                        <SelectItem value="UK">UK</SelectItem>
+                        <SelectItem value="CA">CA</SelectItem>
+                        <SelectItem value="AU">AU</SelectItem>
+                        <SelectItem value="JP">JP</SelectItem>
+                        <SelectItem value="MX">MX</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="quantity">Quantity</Label>
+                    <Input
+                      id="quantity"
+                      type="number"
+                      min="1"
+                      value={newPO.quantity}
+                      onChange={(e) => setNewPO({ ...newPO, quantity: parseInt(e.target.value) || 1 })}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="cost_per_unit">Cost per Unit ($)</Label>
+                    <Input
+                      id="cost_per_unit"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={newPO.cost_per_unit}
+                      onChange={(e) => setNewPO({ ...newPO, cost_per_unit: parseFloat(e.target.value) || 0 })}
+                    />
+                  </div>
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="region">Region</Label>
-                  <Select
-                    value={newPO.region}
-                    onValueChange={(value) => setNewPO({ ...newPO, region: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select region" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="US">US</SelectItem>
-                      <SelectItem value="EU">EU</SelectItem>
-                      <SelectItem value="UK">UK</SelectItem>
-                      <SelectItem value="CA">CA</SelectItem>
-                      <SelectItem value="AU">AU</SelectItem>
-                      <SelectItem value="JP">JP</SelectItem>
-                      <SelectItem value="MX">MX</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="quantity">Quantity</Label>
-                  <Input
-                    id="quantity"
-                    type="number"
-                    min="1"
-                    value={newPO.quantity}
-                    onChange={(e) => setNewPO({ ...newPO, quantity: parseInt(e.target.value) || 1 })}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="cost_per_unit">Cost per Unit ($)</Label>
-                  <Input
-                    id="cost_per_unit"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={newPO.cost_per_unit}
-                    onChange={(e) => setNewPO({ ...newPO, cost_per_unit: parseFloat(e.target.value) || 0 })}
-                  />
-                </div>
-
-                <div className="col-span-2 p-4 bg-muted/50 rounded-lg">
+                <div className="p-4 bg-muted/50 rounded-lg">
                   <div className="flex justify-between items-center">
                     <span className="text-muted-foreground">Total Cost:</span>
                     <span className="text-2xl font-bold text-primary">
@@ -572,38 +719,17 @@ const PurchaseOrders = () => {
                                 <MoreHorizontal className="h-4 w-4" />
                               </Button>
                             </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
+                            <DropdownMenuContent align="end" className="bg-popover">
                               <DropdownMenuItem>View Details</DropdownMenuItem>
                               {order.status === "draft" && (
                                 <DropdownMenuItem 
                                   onClick={() => updateStatusMutation.mutate({ id: order.id, status: "submitted" })}
                                 >
+                                  <Send className="h-4 w-4 mr-2" />
                                   Submit for Approval
                                 </DropdownMenuItem>
                               )}
-                              {isAdmin && order.status === "submitted" && (
-                                <>
-                                  <DropdownMenuItem
-                                    onClick={() => updateStatusMutation.mutate({ id: order.id, status: "approved" })}
-                                  >
-                                    Approve
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    onClick={() => updateStatusMutation.mutate({ id: order.id, status: "cancelled" })}
-                                    className="text-destructive"
-                                  >
-                                    Reject
-                                  </DropdownMenuItem>
-                                </>
-                              )}
-                              {isAdmin && order.status === "approved" && (
-                                <DropdownMenuItem
-                                  onClick={() => updateStatusMutation.mutate({ id: order.id, status: "received" })}
-                                >
-                                  Mark as Received
-                                </DropdownMenuItem>
-                              )}
-                              {isAdmin && order.status !== "cancelled" && order.status !== "received" && (
+                              {isAdmin && order.status !== "cancelled" && order.status !== "received" && order.status !== "rejected" && (
                                 <DropdownMenuItem 
                                   onClick={() => updateStatusMutation.mutate({ id: order.id, status: "cancelled" })}
                                   className="text-destructive"
