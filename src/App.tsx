@@ -54,7 +54,7 @@ const App = () => (
                 <Route path="shipments" element={<Shipments />} />
                 <Route path="suppliers" element={<PlaceholderPage title="Suppliers" description="Manage your supplier relationships" />} />
                 <Route path="warehouses" element={<PlaceholderPage title="Warehouses" description="Configure warehouse locations" />} />
-                <Route path="approvals" element={<PlaceholderPage title="Approvals" description="Review and approve pending requests" />} />
+                <Route path="approvals" element={<Approvals />} />
                 <Route path="reports" element={<PlaceholderPage title="Reports" description="View analytics and reports" />} />
                 <Route path="billing" element={<PlaceholderPage title="Billing" description="Manage subscription and payments" />} />
                 <Route path="settings" element={<PlaceholderPage title="Settings" description="Configure organization settings" />} />
