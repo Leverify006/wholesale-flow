@@ -16,6 +16,7 @@ import Inventory from "./pages/Inventory";
 import PurchaseOrders from "./pages/PurchaseOrders";
 import Shipments from "./pages/Shipments";
 import UserManagement from "./pages/UserManagement";
+import Approvals from "./pages/Approvals";
 import PlaceholderPage from "./components/PlaceholderPage";
 import NotFound from "./pages/NotFound";
 import Index from "./pages/Index";
