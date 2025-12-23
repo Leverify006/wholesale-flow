@@ -31,19 +31,21 @@ interface SidebarProps {
 
 // Define navigation with role restrictions
 const getNavigation = (isAdmin: boolean) => {
+  // Base navigation available to all authenticated users
   const baseNav = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard, adminOnly: false },
     { name: "Purchase Orders", href: "/purchase-orders", icon: ShoppingCart, adminOnly: false },
+    { name: "Approvals", href: "/approvals", icon: CheckSquare, adminOnly: false },
+    { name: "Shipments", href: "/shipments", icon: Truck, adminOnly: false },
   ];
 
+  // Admin-only navigation items
   const adminNav = [
     { name: "Products", href: "/products", icon: Package, adminOnly: true },
     { name: "SKUs", href: "/skus", icon: Boxes, adminOnly: true },
     { name: "Inventory", href: "/inventory", icon: Warehouse, adminOnly: true },
-    { name: "Shipments", href: "/shipments", icon: Truck, adminOnly: true },
     { name: "Suppliers", href: "/suppliers", icon: Users, adminOnly: true },
     { name: "Warehouses", href: "/warehouses", icon: Building, adminOnly: true },
-    { name: "Approvals", href: "/approvals", icon: CheckSquare, adminOnly: true },
     { name: "Reports", href: "/reports", icon: BarChart3, adminOnly: true },
     { name: "User Management", href: "/users", icon: UserPlus, adminOnly: true },
   ];
