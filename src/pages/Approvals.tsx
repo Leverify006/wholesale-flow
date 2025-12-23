@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Search, Filter, CheckCircle, XCircle, Clock, ShoppingCart, Eye } from "lucide-react";
+import { Search, Filter, CheckCircle, XCircle, Clock, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,7 +37,10 @@ const Approvals = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  // Fetch pending approval POs
+  // Users can view but only admins can manage approvals
+  const canManageApprovals = isAdmin;
+
+  // Fetch pending approval POs (admins see for action, users see for tracking)
   const { data: pendingPOs = [], isLoading } = useQuery({
     queryKey: ["pending_approvals", organizationId],
     queryFn: async () => {
@@ -56,7 +59,7 @@ const Approvals = () => {
       if (error) throw error;
       return data || [];
     },
-    enabled: !!organizationId && isAdmin,
+    enabled: !!organizationId,
   });
 
   // Fetch all POs for history
@@ -79,7 +82,7 @@ const Approvals = () => {
       if (error) throw error;
       return data || [];
     },
-    enabled: !!organizationId && isAdmin,
+    enabled: !!organizationId,
   });
 
   // Approve PO mutation
@@ -180,29 +183,15 @@ const Approvals = () => {
     }
   };
 
-  if (!isAdmin) {
-    return (
-      <div className="p-6 flex items-center justify-center min-h-[50vh]">
-        <Card className="border-border/50 bg-card/80 backdrop-blur-sm max-w-md">
-          <CardContent className="p-8 text-center">
-            <CheckCircle className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
-            <h2 className="text-xl font-semibold mb-2">Access Restricted</h2>
-            <p className="text-muted-foreground">
-              Only administrators can manage approvals.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
   return (
     <div className="p-6 space-y-6 animate-fade-in">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Approvals</h1>
-          <p className="text-muted-foreground">Review and approve purchase orders</p>
+          <p className="text-muted-foreground">
+            {canManageApprovals ? "Review and approve purchase orders" : "Track the status of your submitted purchase orders"}
+          </p>
         </div>
       </div>
 
@@ -273,10 +262,10 @@ const Approvals = () => {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Clock className="h-5 w-5 text-warning" />
-            Pending Approvals
+            {canManageApprovals ? "Pending Approvals" : "Your Pending Submissions"}
           </CardTitle>
           <CardDescription>
-            {filteredPOs.length} purchase orders awaiting your approval
+            {filteredPOs.length} purchase orders {canManageApprovals ? "awaiting approval" : "awaiting review"}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -292,17 +281,21 @@ const Approvals = () => {
                   <TableHead>Supplier</TableHead>
                   <TableHead>Total Cost</TableHead>
                   <TableHead>Submitted</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  {canManageApprovals && <TableHead className="text-right">Actions</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredPOs.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="h-32 text-center">
+                    <TableCell colSpan={canManageApprovals ? 5 : 4} className="h-32 text-center">
                       <div className="flex flex-col items-center gap-2 text-muted-foreground">
                         <CheckCircle className="h-8 w-8 opacity-50" />
-                        <p>No pending approvals</p>
-                        <p className="text-sm">All purchase orders have been reviewed</p>
+                        <p>No pending {canManageApprovals ? "approvals" : "submissions"}</p>
+                        <p className="text-sm">
+                          {canManageApprovals 
+                            ? "All purchase orders have been reviewed" 
+                            : "You have no pending purchase orders"}
+                        </p>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -325,38 +318,40 @@ const Approvals = () => {
                           <p>{new Date(po.created_at).toLocaleDateString()}</p>
                         </div>
                       </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="gap-1"
-                          >
-                            <Eye className="h-4 w-4" />
-                            View
-                          </Button>
-                          <Button
-                            variant="default"
-                            size="sm"
-                            className="gap-1"
-                            onClick={() => handleApprove(po)}
-                            disabled={approveMutation.isPending}
-                          >
-                            <CheckCircle className="h-4 w-4" />
-                            Approve
-                          </Button>
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            className="gap-1"
-                            onClick={() => handleOpenReject(po)}
-                            disabled={rejectMutation.isPending}
-                          >
-                            <XCircle className="h-4 w-4" />
-                            Reject
-                          </Button>
-                        </div>
-                      </TableCell>
+                      {canManageApprovals && (
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="gap-1"
+                            >
+                              <Eye className="h-4 w-4" />
+                              View
+                            </Button>
+                            <Button
+                              variant="default"
+                              size="sm"
+                              className="gap-1"
+                              onClick={() => handleApprove(po)}
+                              disabled={approveMutation.isPending}
+                            >
+                              <CheckCircle className="h-4 w-4" />
+                              Approve
+                            </Button>
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              className="gap-1"
+                              onClick={() => handleOpenReject(po)}
+                              disabled={rejectMutation.isPending}
+                            >
+                              <XCircle className="h-4 w-4" />
+                              Reject
+                            </Button>
+                          </div>
+                        </TableCell>
+                      )}
                     </TableRow>
                   ))
                 )}
