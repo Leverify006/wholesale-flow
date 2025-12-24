@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Package, Eye, EyeOff, ArrowRight, Check, Users, ShieldCheck } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
 
 const Signup = () => {
   const [searchParams] = useSearchParams();
@@ -20,7 +21,7 @@ const Signup = () => {
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { signUp, user, loading } = useAuth();
+  const { user, loading } = useAuth();
 
   // Redirect if already logged in
   useEffect(() => {
@@ -59,35 +60,60 @@ const Signup = () => {
     setIsLoading(true);
 
     // Map user-friendly role names to app_role enum values
-    const roleMapping = selectedRole === "admin" ? "admin" : "viewer";
+    const requestedRole = selectedRole === "admin" ? "admin" : "viewer";
 
-    const { error } = await signUp(email, password, fullName, roleMapping);
+    try {
+      // Check if email already exists in pending_users
+      const { data: existingPending } = await supabase
+        .from("pending_users")
+        .select("id")
+        .eq("email", email)
+        .maybeSingle();
 
-    if (error) {
+      if (existingPending) {
+        toast({
+          title: "Request already exists",
+          description: "A signup request with this email is already pending approval.",
+          variant: "destructive",
+        });
+        setIsLoading(false);
+        return;
+      }
+
+      // Insert into pending_users table for admin approval
+      const { error } = await supabase
+        .from("pending_users")
+        .insert({
+          email,
+          full_name: fullName,
+          requested_role: requestedRole,
+        });
+
+      if (error) {
+        throw error;
+      }
+
+      toast({
+        title: "Request submitted!",
+        description: "Your signup request has been submitted. An admin will review and approve your account.",
+      });
+      
+      setIsLoading(false);
+      navigate("/login");
+    } catch (error: any) {
       setIsLoading(false);
       
-      let errorMessage = "Failed to create account. Please try again.";
-      if (error.message.includes("already registered")) {
-        errorMessage = "This email is already registered. Please sign in instead.";
-      } else if (error.message.includes("invalid email")) {
-        errorMessage = "Please enter a valid email address.";
+      let errorMessage = "Failed to submit signup request. Please try again.";
+      if (error.message?.includes("duplicate")) {
+        errorMessage = "This email is already registered or pending approval.";
       }
       
       toast({
-        title: "Sign up failed",
+        title: "Request failed",
         description: errorMessage,
         variant: "destructive",
       });
-      return;
     }
-
-    toast({
-      title: "Account created!",
-      description: "Please check your email to confirm your account, or sign in if email confirmation is disabled.",
-    });
-    
-    setIsLoading(false);
-    navigate("/login");
   };
 
   if (loading) {
@@ -127,11 +153,11 @@ const Signup = () => {
               </div>
               <span className="text-sm font-medium text-primary capitalize">{selectedRole} Account</span>
             </div>
-            <CardTitle className="text-2xl text-center">Create an account</CardTitle>
+            <CardTitle className="text-2xl text-center">Request an account</CardTitle>
             <CardDescription className="text-center">
               {selectedRole === "admin" 
-                ? "Full access to manage your wholesale operations" 
-                : "Create and track purchase orders"}
+                ? "Request admin access - requires approval" 
+                : "Request user access - requires approval"}
             </CardDescription>
           </CardHeader>
           <form onSubmit={handleSubmit}>
@@ -205,6 +231,10 @@ const Signup = () => {
                   className="bg-background/50"
                 />
               </div>
+              
+              <div className="rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">
+                <p>Your request will be reviewed by an administrator. You'll be notified once approved.</p>
+              </div>
             </CardContent>
             <CardFooter className="flex flex-col gap-4">
               <Button
@@ -212,7 +242,7 @@ const Signup = () => {
                 className="w-full gap-2"
                 disabled={isLoading || !passwordRequirements.every((r) => r.met)}
               >
-                {isLoading ? "Creating account..." : "Create account"}
+                {isLoading ? "Submitting request..." : "Submit request"}
                 <ArrowRight className="h-4 w-4" />
               </Button>
               <p className="text-sm text-center text-muted-foreground">

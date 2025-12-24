@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Search, MoreHorizontal, Users, Trash2, UserPlus } from "lucide-react";
+import { Search, MoreHorizontal, Users, Trash2, UserPlus, Clock, CheckCircle, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -45,6 +45,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -75,13 +76,15 @@ const UserManagement = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
+  const [approveDialogUser, setApproveDialogUser] = useState<any>(null);
+  const [selectedApproveRole, setSelectedApproveRole] = useState<AppRole>("viewer");
   const [newUser, setNewUser] = useState({
     email: "",
     password: "",
     full_name: "",
     role: "viewer" as AppRole,
   });
-  const { organizationId } = useAuth();
+  const { organizationId, user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -105,12 +108,26 @@ const UserManagement = () => {
     enabled: !!organizationId,
   });
 
+  // Fetch pending users
+  const { data: pendingUsers = [], isLoading: pendingLoading } = useQuery({
+    queryKey: ["pending_users"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("pending_users")
+        .select("*")
+        .eq("status", "pending")
+        .order("created_at", { ascending: false });
+      
+      if (error) throw error;
+      return data || [];
+    },
+  });
+
   // Add user mutation
   const addUserMutation = useMutation({
     mutationFn: async (userData: typeof newUser) => {
       if (!organizationId) throw new Error("No organization selected");
 
-      // Create user via Supabase auth admin (this requires service role, so we'll use signUp)
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: userData.email,
         password: userData.password,
@@ -125,7 +142,6 @@ const UserManagement = () => {
       if (authError) throw authError;
       if (!authData.user) throw new Error("Failed to create user");
 
-      // Add user role
       const { error: roleError } = await supabase
         .from("user_roles")
         .insert({
@@ -151,6 +167,99 @@ const UserManagement = () => {
       toast({
         title: "Error",
         description: error.message || "Failed to add user.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Approve pending user mutation
+  const approveUserMutation = useMutation({
+    mutationFn: async ({ pendingUser, role }: { pendingUser: any; role: AppRole }) => {
+      if (!organizationId) throw new Error("No organization selected");
+
+      // Create the user account
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: pendingUser.email,
+        password: crypto.randomUUID(), // Temporary password - user will need to reset
+        options: {
+          data: {
+            full_name: pendingUser.full_name,
+          },
+          emailRedirectTo: `${window.location.origin}/`,
+        },
+      });
+
+      if (authError) throw authError;
+      if (!authData.user) throw new Error("Failed to create user");
+
+      // Add user role
+      const { error: roleError } = await supabase
+        .from("user_roles")
+        .insert({
+          user_id: authData.user.id,
+          organization_id: organizationId,
+          role: role,
+        });
+
+      if (roleError) throw roleError;
+
+      // Update pending user status
+      const { error: updateError } = await supabase
+        .from("pending_users")
+        .update({ 
+          status: "approved", 
+          reviewed_at: new Date().toISOString(),
+          reviewed_by: user?.id 
+        })
+        .eq("id", pendingUser.id);
+
+      if (updateError) throw updateError;
+
+      return authData.user;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["org_users"] });
+      queryClient.invalidateQueries({ queryKey: ["pending_users"] });
+      setApproveDialogUser(null);
+      toast({
+        title: "User Approved",
+        description: "User has been approved and added to the organization. They will receive an email to set their password.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to approve user.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Reject pending user mutation
+  const rejectUserMutation = useMutation({
+    mutationFn: async (pendingUserId: string) => {
+      const { error } = await supabase
+        .from("pending_users")
+        .update({ 
+          status: "rejected", 
+          reviewed_at: new Date().toISOString(),
+          reviewed_by: user?.id 
+        })
+        .eq("id", pendingUserId);
+      
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["pending_users"] });
+      toast({
+        title: "Request Rejected",
+        description: "The signup request has been rejected.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to reject request.",
         variant: "destructive",
       });
     },
@@ -320,137 +429,298 @@ const UserManagement = () => {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
         {[
-          { label: "Admins", count: roleCounts.admin, color: "text-destructive" },
-          { label: "Managers", count: roleCounts.manager, color: "text-primary" },
-          { label: "Purchasing", count: roleCounts.purchasing, color: "text-accent" },
-          { label: "Other", count: roleCounts.other, color: "text-muted-foreground" },
+          { label: "Pending", count: pendingUsers.length, color: "text-warning", icon: Clock },
+          { label: "Admins", count: roleCounts.admin, color: "text-destructive", icon: null },
+          { label: "Managers", count: roleCounts.manager, color: "text-primary", icon: null },
+          { label: "Purchasing", count: roleCounts.purchasing, color: "text-accent", icon: null },
+          { label: "Other", count: roleCounts.other, color: "text-muted-foreground", icon: null },
         ].map((stat) => (
           <Card key={stat.label} className="border-border/50 bg-card/80 backdrop-blur-sm">
             <CardContent className="p-4 text-center">
-              <p className={`text-2xl font-bold ${stat.color}`}>{stat.count}</p>
+              <div className="flex items-center justify-center gap-1">
+                {stat.icon && <stat.icon className={`h-4 w-4 ${stat.color}`} />}
+                <p className={`text-2xl font-bold ${stat.color}`}>{stat.count}</p>
+              </div>
               <p className="text-sm text-muted-foreground">{stat.label}</p>
             </CardContent>
           </Card>
         ))}
       </div>
 
-      {/* Search */}
-      <Card className="border-border/50 bg-card/80 backdrop-blur-sm">
-        <CardContent className="p-4">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search users..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 bg-background/50"
-            />
-          </div>
-        </CardContent>
-      </Card>
+      {/* Tabs for Pending vs Active Users */}
+      <Tabs defaultValue="pending" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="pending" className="gap-2">
+            <Clock className="h-4 w-4" />
+            Pending Requests
+            {pendingUsers.length > 0 && (
+              <Badge variant="secondary" className="ml-1">{pendingUsers.length}</Badge>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="active" className="gap-2">
+            <Users className="h-4 w-4" />
+            Active Users
+          </TabsTrigger>
+        </TabsList>
 
-      {/* Users Table */}
-      <Card className="border-border/50 bg-card/80 backdrop-blur-sm">
-        <CardHeader>
-          <CardTitle>Organization Users</CardTitle>
-          <CardDescription>
-            {filteredUsers.length} users found
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="flex items-center justify-center h-32">
-              <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>User</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Joined</TableHead>
-                  <TableHead className="w-[50px]"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredUsers.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={4} className="h-32 text-center">
-                      <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                        <Users className="h-8 w-8 opacity-50" />
-                        <p>No users found</p>
-                        <Button variant="outline" size="sm" onClick={() => setIsAddDialogOpen(true)}>
-                          Add first user
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  filteredUsers.map((userRole: any) => (
-                    <TableRow key={userRole.id}>
-                      <TableCell>
-                        <div className="flex items-center gap-3">
-                          <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-                            <span className="text-sm font-medium text-primary">
-                              {userRole.profiles?.full_name?.charAt(0)?.toUpperCase() || "U"}
-                            </span>
-                          </div>
-                          <div>
-                            <p className="font-medium">{userRole.profiles?.full_name || "Unknown"}</p>
-                            <p className="text-sm text-muted-foreground">ID: {userRole.user_id.slice(0, 8)}</p>
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge className={ROLE_COLORS[userRole.role as AppRole]}>
-                          {ROLE_LABELS[userRole.role as AppRole] || userRole.role}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {userRole.created_at
-                          ? new Date(userRole.created_at).toLocaleDateString()
-                          : "—"}
-                      </TableCell>
-                      <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8">
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            {Object.entries(ROLE_LABELS).map(([value, label]) => (
-                              <DropdownMenuItem
-                                key={value}
-                                onClick={() => updateRoleMutation.mutate({ 
-                                  userRoleId: userRole.id, 
-                                  newRole: value as AppRole 
-                                })}
-                                disabled={userRole.role === value}
-                              >
-                                Set as {label}
-                              </DropdownMenuItem>
-                            ))}
-                            <DropdownMenuItem
-                              onClick={() => setDeleteUserId(userRole.id)}
-                              className="text-destructive"
-                            >
-                              <Trash2 className="h-4 w-4 mr-2" />
-                              Remove from Organization
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
+        {/* Pending Users Tab */}
+        <TabsContent value="pending">
+          <Card className="border-border/50 bg-card/80 backdrop-blur-sm">
+            <CardHeader>
+              <CardTitle>Pending Signup Requests</CardTitle>
+              <CardDescription>
+                Review and approve new user signup requests
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {pendingLoading ? (
+                <div className="flex items-center justify-center h-32">
+                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+                </div>
+              ) : pendingUsers.length === 0 ? (
+                <div className="flex flex-col items-center gap-2 text-muted-foreground py-8">
+                  <CheckCircle className="h-8 w-8 opacity-50" />
+                  <p>No pending requests</p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>User</TableHead>
+                      <TableHead>Requested Role</TableHead>
+                      <TableHead>Requested At</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+                  </TableHeader>
+                  <TableBody>
+                    {pendingUsers.map((pendingUser: any) => (
+                      <TableRow key={pendingUser.id}>
+                        <TableCell>
+                          <div className="flex items-center gap-3">
+                            <div className="h-10 w-10 rounded-full bg-warning/10 flex items-center justify-center">
+                              <span className="text-sm font-medium text-warning">
+                                {pendingUser.full_name?.charAt(0)?.toUpperCase() || "?"}
+                              </span>
+                            </div>
+                            <div>
+                              <p className="font-medium">{pendingUser.full_name}</p>
+                              <p className="text-sm text-muted-foreground">{pendingUser.email}</p>
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="capitalize">
+                            {pendingUser.requested_role}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {new Date(pendingUser.created_at).toLocaleDateString()}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="gap-1 text-destructive hover:text-destructive"
+                              onClick={() => rejectUserMutation.mutate(pendingUser.id)}
+                              disabled={rejectUserMutation.isPending}
+                            >
+                              <XCircle className="h-4 w-4" />
+                              Reject
+                            </Button>
+                            <Button
+                              size="sm"
+                              className="gap-1"
+                              onClick={() => {
+                                setSelectedApproveRole(pendingUser.requested_role as AppRole);
+                                setApproveDialogUser(pendingUser);
+                              }}
+                            >
+                              <CheckCircle className="h-4 w-4" />
+                              Approve
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Active Users Tab */}
+        <TabsContent value="active">
+          {/* Search */}
+          <Card className="border-border/50 bg-card/80 backdrop-blur-sm mb-4">
+            <CardContent className="p-4">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search users..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-9 bg-background/50"
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Users Table */}
+          <Card className="border-border/50 bg-card/80 backdrop-blur-sm">
+            <CardHeader>
+              <CardTitle>Organization Users</CardTitle>
+              <CardDescription>
+                {filteredUsers.length} users found
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {isLoading ? (
+                <div className="flex items-center justify-center h-32">
+                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>User</TableHead>
+                      <TableHead>Role</TableHead>
+                      <TableHead>Joined</TableHead>
+                      <TableHead className="w-[50px]"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredUsers.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="h-32 text-center">
+                          <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                            <Users className="h-8 w-8 opacity-50" />
+                            <p>No users found</p>
+                            <Button variant="outline" size="sm" onClick={() => setIsAddDialogOpen(true)}>
+                              Add first user
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      filteredUsers.map((userRole: any) => (
+                        <TableRow key={userRole.id}>
+                          <TableCell>
+                            <div className="flex items-center gap-3">
+                              <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+                                <span className="text-sm font-medium text-primary">
+                                  {userRole.profiles?.full_name?.charAt(0)?.toUpperCase() || "U"}
+                                </span>
+                              </div>
+                              <div>
+                                <p className="font-medium">{userRole.profiles?.full_name || "Unknown"}</p>
+                                <p className="text-sm text-muted-foreground">ID: {userRole.user_id.slice(0, 8)}</p>
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge className={ROLE_COLORS[userRole.role as AppRole]}>
+                              {ROLE_LABELS[userRole.role as AppRole] || userRole.role}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            {userRole.created_at
+                              ? new Date(userRole.created_at).toLocaleDateString()
+                              : "—"}
+                          </TableCell>
+                          <TableCell>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-8 w-8">
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                {Object.entries(ROLE_LABELS).map(([value, label]) => (
+                                  <DropdownMenuItem
+                                    key={value}
+                                    onClick={() => updateRoleMutation.mutate({ 
+                                      userRoleId: userRole.id, 
+                                      newRole: value as AppRole 
+                                    })}
+                                    disabled={userRole.role === value}
+                                  >
+                                    Set as {label}
+                                  </DropdownMenuItem>
+                                ))}
+                                <DropdownMenuItem
+                                  onClick={() => setDeleteUserId(userRole.id)}
+                                  className="text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4 mr-2" />
+                                  Remove from Organization
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      {/* Approve User Dialog */}
+      <Dialog open={!!approveDialogUser} onOpenChange={() => setApproveDialogUser(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Approve User</DialogTitle>
+            <DialogDescription>
+              Approve {approveDialogUser?.full_name} and assign them a role.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Email</Label>
+              <Input value={approveDialogUser?.email || ""} disabled />
+            </div>
+            <div className="space-y-2">
+              <Label>Assign Role</Label>
+              <Select
+                value={selectedApproveRole}
+                onValueChange={(value: AppRole) => setSelectedApproveRole(value)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select role" />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(ROLE_LABELS).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setApproveDialogUser(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => approveUserMutation.mutate({ 
+                pendingUser: approveDialogUser, 
+                role: selectedApproveRole 
+              })}
+              disabled={approveUserMutation.isPending}
+            >
+              {approveUserMutation.isPending ? "Approving..." : "Approve User"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={!!deleteUserId} onOpenChange={() => setDeleteUserId(null)}>
