@@ -132,8 +132,8 @@ const Index = () => {
                   </li>
                 </ul>
                 <Button className="w-full" variant="outline" asChild>
-                  <Link to="/signup?role=user">
-                    Sign Up as User
+                  <Link to="/login">
+                    Sign In
                     <ArrowRight className="h-4 w-4 ml-2" />
                   </Link>
                 </Button>
@@ -174,8 +174,8 @@ const Index = () => {
                   </li>
                 </ul>
                 <Button className="w-full" asChild>
-                  <Link to="/signup?role=admin">
-                    Sign Up as Admin
+                  <Link to="/login">
+                    Sign In
                     <ArrowRight className="h-4 w-4 ml-2" />
                   </Link>
                 </Button>
@@ -184,9 +184,10 @@ const Index = () => {
           </div>
           
           <div className="text-center mt-8">
-            <Button size="lg" asChild className="gap-2">
+            <p className="text-muted-foreground mb-4">New user? Request access to join the platform</p>
+            <Button size="lg" variant="outline" asChild className="gap-2">
               <Link to="/signup">
-                Get Started Now
+                Sign Up
                 <ArrowRight className="h-4 w-4" />
               </Link>
             </Button>
