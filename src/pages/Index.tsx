@@ -102,9 +102,9 @@ const Index = () => {
             Choose Your Role
           </h2>
           <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
-            <Card className="bg-card/50 backdrop-blur-sm border-border/50 hover:border-primary/50 transition-colors">
+            <Card className="bg-card/50 backdrop-blur-sm border-border/50 hover:border-primary/50 transition-colors cursor-pointer group">
               <CardHeader className="text-center">
-                <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
+                <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4 group-hover:bg-primary/20 transition-colors">
                   <Users className="h-8 w-8 text-primary" />
                 </div>
                 <CardTitle className="text-2xl">User Access</CardTitle>
@@ -113,30 +113,36 @@ const Index = () => {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <ul className="space-y-2 text-muted-foreground">
+                <ul className="space-y-2 text-muted-foreground mb-6">
                   <li className="flex items-center gap-2">
                     <div className="h-1.5 w-1.5 rounded-full bg-primary" />
                     Create Purchase Orders
                   </li>
                   <li className="flex items-center gap-2">
                     <div className="h-1.5 w-1.5 rounded-full bg-primary" />
-                    View your own POs
+                    Send for Approval
                   </li>
                   <li className="flex items-center gap-2">
                     <div className="h-1.5 w-1.5 rounded-full bg-primary" />
-                    Track order status
+                    Track Shipments & PO Status
                   </li>
                   <li className="flex items-center gap-2">
-                    <div className="h-1.5 w-1.5 rounded-full bg-muted-foreground/50" />
-                    <span className="text-muted-foreground/70">No access to approvals</span>
+                    <div className="h-1.5 w-1.5 rounded-full bg-primary" />
+                    View Approval Status
                   </li>
                 </ul>
+                <Button className="w-full" variant="outline" asChild>
+                  <Link to="/signup?role=user">
+                    Sign Up as User
+                    <ArrowRight className="h-4 w-4 ml-2" />
+                  </Link>
+                </Button>
               </CardContent>
             </Card>
             
-            <Card className="bg-card/50 backdrop-blur-sm border-primary/50 ring-1 ring-primary/20">
+            <Card className="bg-card/50 backdrop-blur-sm border-primary/50 ring-1 ring-primary/20 cursor-pointer group">
               <CardHeader className="text-center">
-                <div className="h-16 w-16 rounded-full bg-primary/20 flex items-center justify-center mx-auto mb-4">
+                <div className="h-16 w-16 rounded-full bg-primary/20 flex items-center justify-center mx-auto mb-4 group-hover:bg-primary/30 transition-colors">
                   <ShieldCheck className="h-8 w-8 text-primary" />
                 </div>
                 <CardTitle className="text-2xl">Admin Access</CardTitle>
@@ -145,7 +151,7 @@ const Index = () => {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <ul className="space-y-2 text-muted-foreground">
+                <ul className="space-y-2 text-muted-foreground mb-6">
                   <li className="flex items-center gap-2">
                     <div className="h-1.5 w-1.5 rounded-full bg-primary" />
                     All User permissions
@@ -167,6 +173,12 @@ const Index = () => {
                     Full dashboard access
                   </li>
                 </ul>
+                <Button className="w-full" asChild>
+                  <Link to="/signup?role=admin">
+                    Sign Up as Admin
+                    <ArrowRight className="h-4 w-4 ml-2" />
+                  </Link>
+                </Button>
               </CardContent>
             </Card>
           </div>
