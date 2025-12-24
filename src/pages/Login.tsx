@@ -143,15 +143,30 @@ const Login = () => {
                 {isLoading ? "Signing in..." : "Sign in"}
                 <ArrowRight className="h-4 w-4" />
               </Button>
-              <p className="text-sm text-center text-muted-foreground">
-                Don't have an account?{" "}
-                <Link
-                  to="/signup"
-                  className="text-primary hover:text-primary/80 transition-colors font-medium"
-                >
-                  Sign up
-                </Link>
-              </p>
+              
+              <div className="w-full space-y-2">
+                <p className="text-sm text-center text-muted-foreground">
+                  Don't have an account?
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => navigate("/signup?role=user")}
+                  >
+                    Sign up as User
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => navigate("/signup?role=admin")}
+                  >
+                    Sign up as Admin
+                  </Button>
+                </div>
+              </div>
             </CardFooter>
           </form>
         </Card>
