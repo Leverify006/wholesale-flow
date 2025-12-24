@@ -1,14 +1,17 @@
 import { useState, useEffect } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Package, Eye, EyeOff, ArrowRight, Check } from "lucide-react";
+import { Package, Eye, EyeOff, ArrowRight, Check, Users, ShieldCheck } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 
 const Signup = () => {
+  const [searchParams] = useSearchParams();
+  const selectedRole = searchParams.get("role") || "user";
+  
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -55,7 +58,10 @@ const Signup = () => {
 
     setIsLoading(true);
 
-    const { error } = await signUp(email, password, fullName);
+    // Map user-friendly role names to app_role enum values
+    const roleMapping = selectedRole === "admin" ? "admin" : "viewer";
+
+    const { error } = await signUp(email, password, fullName, roleMapping);
 
     if (error) {
       setIsLoading(false);
@@ -111,9 +117,21 @@ const Signup = () => {
 
         <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
           <CardHeader className="space-y-1">
+            <div className="flex items-center justify-center gap-2 mb-2">
+              <div className={`p-2 rounded-lg ${selectedRole === "admin" ? "bg-primary/20" : "bg-primary/10"}`}>
+                {selectedRole === "admin" ? (
+                  <ShieldCheck className="h-5 w-5 text-primary" />
+                ) : (
+                  <Users className="h-5 w-5 text-primary" />
+                )}
+              </div>
+              <span className="text-sm font-medium text-primary capitalize">{selectedRole} Account</span>
+            </div>
             <CardTitle className="text-2xl text-center">Create an account</CardTitle>
             <CardDescription className="text-center">
-              Start managing your wholesale operations
+              {selectedRole === "admin" 
+                ? "Full access to manage your wholesale operations" 
+                : "Create and track purchase orders"}
             </CardDescription>
           </CardHeader>
           <form onSubmit={handleSubmit}>
