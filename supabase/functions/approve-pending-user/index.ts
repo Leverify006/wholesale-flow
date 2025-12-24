@@ -20,26 +20,45 @@ const json = (body: unknown, init: ResponseInit = {}) =>
   });
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-  if (req.method !== "POST") return json({ error: "Method not allowed" }, { status: 405 });
+  console.log("[approve-pending-user] Request received:", req.method);
+
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  if (req.method !== "POST") {
+    console.log("[approve-pending-user] Method not allowed:", req.method);
+    return json({ error: "Method not allowed" }, { status: 405 });
+  }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const supabaseAnonKey = Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
+  // Try both possible env var names
+  const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
+  console.log("[approve-pending-user] Env check:", {
+    hasUrl: !!supabaseUrl,
+    hasAnonKey: !!supabaseAnonKey,
+    hasServiceKey: !!supabaseServiceKey,
+  });
+
   if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceKey) {
+    console.error("[approve-pending-user] Missing environment variables");
     return json({ error: "Server misconfiguration" }, { status: 500 });
   }
 
   const authHeader = req.headers.get("Authorization") ?? "";
   if (!authHeader.startsWith("Bearer ")) {
+    console.log("[approve-pending-user] Missing or invalid auth header");
     return json({ error: "Unauthorized" }, { status: 401 });
   }
 
   let payload: { pendingUserId?: string; organizationId?: string; role?: string };
   try {
     payload = await req.json();
-  } catch {
+    console.log("[approve-pending-user] Payload:", payload);
+  } catch (e) {
+    console.error("[approve-pending-user] JSON parse error:", e);
     return json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
@@ -57,12 +76,8 @@ serve(async (req) => {
   ]);
 
   if (!pendingUserId || !organizationId || !role || !allowedRoles.has(role)) {
-    return json(
-      { error: "Missing or invalid parameters" },
-      {
-        status: 400,
-      },
-    );
+    console.log("[approve-pending-user] Invalid parameters:", { pendingUserId, organizationId, role });
+    return json({ error: "Missing or invalid parameters" }, { status: 400 });
   }
 
   // Client with caller's JWT (for permission checks)
@@ -78,8 +93,11 @@ serve(async (req) => {
   const { data: userData, error: userError } = await supabaseAuthed.auth.getUser();
   const caller = userData?.user;
   if (userError || !caller) {
+    console.log("[approve-pending-user] Auth getUser failed:", userError?.message);
     return json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  console.log("[approve-pending-user] Caller:", caller.id);
 
   // Verify caller is an admin of the target org
   const { data: isAdmin, error: adminCheckError } = await supabaseAuthed.rpc("has_role", {
@@ -88,11 +106,14 @@ serve(async (req) => {
     _role: "admin",
   });
 
+  console.log("[approve-pending-user] Admin check:", { isAdmin, adminCheckError: adminCheckError?.message });
+
   if (adminCheckError) {
     return json({ error: adminCheckError.message }, { status: 400 });
   }
 
   if (!isAdmin) {
+    console.log("[approve-pending-user] Caller is not admin for org:", organizationId);
     return json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -107,14 +128,26 @@ serve(async (req) => {
     .eq("id", pendingUserId)
     .maybeSingle();
 
-  if (pendingError) return json({ error: pendingError.message }, { status: 400 });
-  if (!pendingUser) return json({ error: "Pending request not found" }, { status: 404 });
+  console.log("[approve-pending-user] Pending user lookup:", {
+    found: !!pendingUser,
+    status: pendingUser?.status,
+    error: pendingError?.message,
+  });
+
+  if (pendingError) {
+    return json({ error: pendingError.message }, { status: 400 });
+  }
+  if (!pendingUser) {
+    return json({ error: "Pending request not found" }, { status: 404 });
+  }
   if (pendingUser.status !== "pending") {
     return json({ error: "Request is not pending" }, { status: 400 });
   }
 
   const origin = req.headers.get("origin") ?? undefined;
   const redirectTo = origin ? `${origin}/login` : undefined;
+
+  console.log("[approve-pending-user] Inviting user:", pendingUser.email);
 
   // Invite user (creates user + sends email to set password)
   const { data: inviteData, error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(
@@ -129,22 +162,29 @@ serve(async (req) => {
   );
 
   if (inviteError) {
+    console.error("[approve-pending-user] Invite error:", inviteError.message);
     return json({ error: inviteError.message }, { status: 400 });
   }
 
   const newUserId = inviteData?.user?.id;
+  console.log("[approve-pending-user] Invited user ID:", newUserId);
+
   if (!newUserId) {
     return json({ error: "Failed to create user" }, { status: 500 });
   }
 
   // Ensure profile exists so User Management can show the name
-  await supabaseAdmin.from("profiles").upsert(
+  const { error: profileError } = await supabaseAdmin.from("profiles").upsert(
     {
       id: newUserId,
       full_name: pendingUser.full_name,
     },
     { onConflict: "id" },
   );
+
+  if (profileError) {
+    console.error("[approve-pending-user] Profile upsert error:", profileError.message);
+  }
 
   const { error: roleInsertError } = await supabaseAdmin.from("user_roles").insert({
     user_id: newUserId,
@@ -153,6 +193,7 @@ serve(async (req) => {
   });
 
   if (roleInsertError) {
+    console.error("[approve-pending-user] Role insert error:", roleInsertError.message);
     return json({ error: roleInsertError.message }, { status: 400 });
   }
 
@@ -167,8 +208,10 @@ serve(async (req) => {
     .eq("id", pendingUserId);
 
   if (pendingUpdateError) {
+    console.error("[approve-pending-user] Pending update error:", pendingUpdateError.message);
     return json({ error: pendingUpdateError.message }, { status: 400 });
   }
 
+  console.log("[approve-pending-user] Success! User approved:", newUserId);
   return json({ userId: newUserId });
 });
