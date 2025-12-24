@@ -144,28 +144,18 @@ const Login = () => {
                 <ArrowRight className="h-4 w-4" />
               </Button>
               
-              <div className="w-full space-y-2">
-                <p className="text-sm text-center text-muted-foreground">
+              <div className="w-full text-center">
+                <p className="text-sm text-muted-foreground mb-2">
                   Don't have an account?
                 </p>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => navigate("/signup?role=user")}
-                  >
-                    Sign up as User
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => navigate("/signup?role=admin")}
-                  >
-                    Sign up as Admin
-                  </Button>
-                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => navigate("/signup")}
+                >
+                  Sign up
+                </Button>
               </div>
             </CardFooter>
           </form>
