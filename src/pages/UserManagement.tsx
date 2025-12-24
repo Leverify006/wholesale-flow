@@ -84,7 +84,7 @@ const UserManagement = () => {
     full_name: "",
     role: "viewer" as AppRole,
   });
-  const { organizationId, user } = useAuth();
+  const { organizationId, user, session } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -174,48 +174,23 @@ const UserManagement = () => {
 
   // Approve pending user mutation
   const approveUserMutation = useMutation({
-    mutationFn: async ({ pendingUser, role }: { pendingUser: any; role: AppRole }) => {
+    mutationFn: async ({ pendingUserId, role }: { pendingUserId: string; role: AppRole }) => {
       if (!organizationId) throw new Error("No organization selected");
+      if (!session?.access_token) throw new Error("You must be logged in to approve users.");
 
-      // Create the user account
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: pendingUser.email,
-        password: crypto.randomUUID(), // Temporary password - user will need to reset
-        options: {
-          data: {
-            full_name: pendingUser.full_name,
-          },
-          emailRedirectTo: `${window.location.origin}/`,
+      const { data, error } = await supabase.functions.invoke("approve-pending-user", {
+        body: {
+          pendingUserId,
+          organizationId,
+          role,
+        },
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
         },
       });
 
-      if (authError) throw authError;
-      if (!authData.user) throw new Error("Failed to create user");
-
-      // Add user role
-      const { error: roleError } = await supabase
-        .from("user_roles")
-        .insert({
-          user_id: authData.user.id,
-          organization_id: organizationId,
-          role: role,
-        });
-
-      if (roleError) throw roleError;
-
-      // Update pending user status
-      const { error: updateError } = await supabase
-        .from("pending_users")
-        .update({ 
-          status: "approved", 
-          reviewed_at: new Date().toISOString(),
-          reviewed_by: user?.id 
-        })
-        .eq("id", pendingUser.id);
-
-      if (updateError) throw updateError;
-
-      return authData.user;
+      if (error) throw error;
+      return data as { userId: string };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["org_users"] });
@@ -710,10 +685,12 @@ const UserManagement = () => {
               Cancel
             </Button>
             <Button
-              onClick={() => approveUserMutation.mutate({ 
-                pendingUser: approveDialogUser, 
-                role: selectedApproveRole 
-              })}
+              onClick={() =>
+                approveUserMutation.mutate({
+                  pendingUserId: approveDialogUser.id,
+                  role: selectedApproveRole,
+                })
+              }
               disabled={approveUserMutation.isPending}
             >
               {approveUserMutation.isPending ? "Approving..." : "Approve User"}
