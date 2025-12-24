@@ -137,16 +137,21 @@ const Sidebar = ({ collapsed, onCollapse }: SidebarProps) => {
         </Button>
       </div>
 
-      {/* Role Badge */}
+      {/* User Info & Role Badge */}
       {!collapsed && user && (
-        <div className="px-3 py-2 border-b border-sidebar-border">
-          <div className={cn(
-            "text-xs font-medium px-2 py-1 rounded-full text-center",
-            isAdmin 
-              ? "bg-primary/20 text-primary" 
-              : "bg-muted text-muted-foreground"
-          )}>
-            {isAdmin ? "Admin" : "User"}
+        <div className="px-3 py-3 border-b border-sidebar-border">
+          <div className="flex flex-col gap-2">
+            <p className="text-sm font-medium text-sidebar-foreground truncate">
+              {user.user_metadata?.full_name || user.email}
+            </p>
+            <div className={cn(
+              "text-xs font-medium px-2 py-1 rounded-full text-center w-fit",
+              isAdmin 
+                ? "bg-primary/20 text-primary" 
+                : "bg-muted text-muted-foreground"
+            )}>
+              {isAdmin ? "Admin" : "User"}
+            </div>
           </div>
         </div>
       )}

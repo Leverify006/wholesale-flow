@@ -28,13 +28,17 @@ const ProtectedRoute = ({ children, allowedRoles }: ProtectedRouteProps) => {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // If user has no organization/role, redirect to onboarding
+  // If user has no organization/role, they should wait for admin approval
+  // The onboarding flow is no longer needed since we auto-assign to default org
   if (!organizationId || !userRole) {
-    // Allow access to onboarding page
-    if (location.pathname === "/onboarding") {
-      return <>{children}</>;
-    }
-    return <Navigate to="/onboarding" replace />;
+    return (
+      <div className="flex h-screen items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-4 text-center p-6">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+          <p className="text-muted-foreground">Setting up your account...</p>
+        </div>
+      </div>
+    );
   }
 
   // Check role-based access
